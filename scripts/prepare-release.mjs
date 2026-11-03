@@ -32,9 +32,11 @@ try {
   npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false', archive], scratch);
   await writeFile(join(scratch, 'smoke.mjs'), `
 import assert from 'node:assert/strict';
-import { createDiscoveryClient, serviceRecords } from '@llm-discovery/discovery-core';
+import { createDiscoveryClient, serviceRecords, listIPv4Interfaces, requireLocalIPv4Interface } from '@llm-discovery/discovery-core';
 import { SERVICE_TYPE } from '@llm-discovery/discovery-core/protocol';
 assert.equal(SERVICE_TYPE, '_llm-api._tcp.local');
+const interfaces = listIPv4Interfaces(() => ({ en0: [{ family: 'IPv4', address: '192.168.50.2', internal: false }] }));
+assert.equal(requireLocalIPv4Interface('192.168.50.2', interfaces), '192.168.50.2');
 const client = createDiscoveryClient({ interfaceAddress: '192.168.50.2' });
 client.ingest({ answers: serviceRecords({ id: 'release-check', instanceName: 'Release Check', hostname: 'release-check.local', address: '192.168.50.10', port: 8443, basePath: '/v1' }) });
 assert.equal(client.snapshot()[0].baseURL, 'https://release-check.local:8443/v1');

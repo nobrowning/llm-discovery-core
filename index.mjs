@@ -1,7 +1,22 @@
 import multicastDns from 'multicast-dns';
 import os from 'node:os';
+import { isIP } from 'node:net';
 import { SERVICE_TYPE, canonicalName, candidateFromRecords, normalizeRecord, recordIdentity } from './protocol.mjs';
 export * from './protocol.mjs';
+
+/** List assigned, non-loopback IPv4 addresses without opening a socket. */
+export function listIPv4Interfaces(readInterfaces = os.networkInterfaces) {
+  return Object.entries(readInterfaces()).flatMap(([name, rows]) => (rows ?? [])
+    .filter(row => !row.internal && (row.family === 'IPv4' || row.family === 4) && isIP(row.address) === 4 && row.address !== '0.0.0.0')
+    .map(row => ({ name, address: row.address, mac: row.mac })));
+}
+
+/** Validate an address, not an OS-specific interface name such as en0 or eth0. */
+export function requireLocalIPv4Interface(address, available = listIPv4Interfaces()) {
+  if (typeof address !== 'string' || isIP(address) !== 4) throw new Error('Select a local IPv4 interface address, not a device name.');
+  if (!available.some(row => row.address === address)) throw new Error('The selected discovery interface is not currently attached.');
+  return address;
+}
 
 const recordKey = recordIdentity;
 const semanticCandidate = (candidate) => JSON.stringify({ ...candidate, expiresAt: 0, recordGeneration: 0 });
@@ -27,8 +42,8 @@ export function createDiscoveryClient(options = {}) {
   const now = options.now ?? Date.now;
   const factory = options.transportFactory ?? ((config) => multicastDns(config));
   const notify = (event) => { for (const fn of listeners) { try { fn(event); } catch {} } };
-  const interfaces = () => Object.entries((options.networkInterfaces ?? os.networkInterfaces)()).flatMap(([name, rows]) => (rows ?? []).filter((r) => !r.internal && (r.family === 'IPv4' || r.family === 4)).map((r) => [name, r.address, r.mac]));
-  const networkFingerprint = () => JSON.stringify(interfaces().sort());
+  const interfaces = () => listIPv4Interfaces(options.networkInterfaces);
+  const networkFingerprint = () => JSON.stringify(interfaces().map(({ name, address, mac }) => [name, address, mac]).sort());
 
   function records(name, type) {
     return [...cache.values()].filter((r) => canonicalName(r.name) === canonicalName(name) && r.type === type && r.expiresAt > now());
@@ -120,9 +135,9 @@ export function createDiscoveryClient(options = {}) {
   async function openSocket(epoch) {
     const available = interfaces();
     // One socket corresponds to one attachment. Mixing interfaces cannot safely key candidates.
-    currentInterface = options.interfaceAddress || available[0]?.[1];
+    currentInterface = options.interfaceAddress || available[0]?.address;
     if (!currentInterface) throw new Error('No active IPv4 interface; select a LAN interface explicitly.');
-    if (!options.transportFactory && !available.some((row) => row[1] === currentInterface)) throw new Error('The selected discovery interface is not currently attached.');
+    if (!options.transportFactory) requireLocalIPv4Interface(currentInterface, available);
     const socket = factory({ bind: '0.0.0.0', interface: currentInterface, port: options.port ?? 5353, loopback: true, reuseAddr: true });
     transport = socket;
     socket.on('response', (packet, rinfo) => { if (active && transport === socket && lifecycle === epoch) ingest(packet, rinfo); });

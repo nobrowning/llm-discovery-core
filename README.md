@@ -4,7 +4,7 @@ Reusable Node.js mDNS/DNS-SD discovery and protocol helpers for `_llm-api._tcp.l
 
 ## Develop and package
 
-Requires Node.js 22 or later. Node.js 24 is used by CI.
+Requires Node.js 22 or later and npm. Use a Node.js runtime matching the host CPU (for example, native ARM64 on Apple Silicon or Linux ARM64). The package and its dependencies are JavaScript; no native add-on, Docker, WSL, Homebrew, or system Bonjour/Avahi development library is required.
 
 ```sh
 npm ci --ignore-scripts
@@ -14,19 +14,30 @@ npm pack
 
 ## Install a release
 
-Download `llm-discovery-discovery-core-0.3.0.tgz` and `SHA256SUMS` from [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases). With Node.js 22 or later and npm installed, install the archive in your application:
+Download `llm-discovery-discovery-core-0.3.1.tgz` and `SHA256SUMS` from [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases). With Node.js 22 or later and npm installed, install the archive in your application:
 
 ```sh
-npm install ./llm-discovery-discovery-core-0.3.0.tgz
+npm install ./llm-discovery-discovery-core-0.3.1.tgz
 ```
 
 This is a developer library, with no desktop application or command-line entry point. npm obtains its third-party dependencies from the registry or your local cache; the archive is not an offline runtime bundle. No separate advertiser, Harness plugin, or Demo installation is required. The package is distributed through GitHub Releases and is not published to the npm registry.
 
-On Linux, verify the downloaded archive with `sha256sum --check SHA256SUMS`. On Windows, compare `(Get-FileHash .\llm-discovery-discovery-core-0.3.0.tgz -Algorithm SHA256).Hash` with the entry in `SHA256SUMS`.
+On Linux, verify the downloaded archive with `sha256sum --check SHA256SUMS`; on macOS use `shasum -a 256 -c SHA256SUMS`. On Windows, compare `(Get-FileHash .\llm-discovery-discovery-core-0.3.1.tgz -Algorithm SHA256).Hash` with the entry in `SHA256SUMS`.
 
-Maintainers can run `npm run release:prepare` after installation and tests. It checks the package allowlist, checks reproducible archive bytes, installs the final archive into an isolated temporary project, and exercises its public exports. Outputs are written to `.release-artifacts/`; an optional output directory can be supplied after `--`. Pushing a matching `v0.3.0` tag runs these checks and uploads the archive plus checksum file to GitHub Releases. It never publishes to npm.
+Maintainers can run `npm run release:prepare` after installation and tests. It checks the package allowlist, checks reproducible archive bytes, installs the final archive into an isolated temporary project, and exercises its public exports. Outputs are written to `.release-artifacts/`; an optional output directory can be supplied after `--`. Pushing a matching `v0.3.1` tag runs these checks and uploads the archive plus checksum file to GitHub Releases. It never publishes to npm.
 
 ## Discover services
+
+List assigned, non-loopback IPv4 addresses before selecting a network:
+
+```js
+import { listIPv4Interfaces, requireLocalIPv4Interface } from '@llm-discovery/discovery-core';
+const interfaces = listIPv4Interfaces(); // [{ name, address, mac }, ...]
+console.table(interfaces);
+const interfaceAddress = requireLocalIPv4Interface('192.168.1.20', interfaces);
+```
+
+Interface names differ between operating systems; `interfaceAddress` always takes the IPv4 address, not `en0`, `eth0`, or `Ethernet`. Listing addresses does not prove multicast reachability. VPN and virtual adapters may appear, so select the LAN used by the services. `requireLocalIPv4Interface()` rejects malformed, IPv6, and unattached addresses without opening a socket. The real discovery transport performs the same check when starting and rebinding.
 
 ```js
 import { createDiscoveryClient } from '@llm-discovery/discovery-core';
@@ -77,13 +88,35 @@ The [draft's TXT table](https://datatracker.ietf.org/doc/html/draft-cui-dawn-loc
 
 The network client currently uses IPv4 multicast. It can retain A and AAAA records, but that does not constitute verified IPv6 transport or cross-subnet discovery support. The deterministic tests here do not open multicast sockets; live network and interoperability checks are maintained in the demo repository.
 
+## Platform verification
+
+The same release archive is used on Windows, macOS, and Linux. CI is configured for the following native runners, using [GitHub's documented architecture labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners):
+
+| Platform | Runner | Node.js |
+|---|---|---|
+| Linux x64 | `ubuntu-24.04` | 22 and 24 |
+| Linux ARM64 | `ubuntu-24.04-arm` | 24 |
+| Windows x64 | `windows-2022` | 24 |
+| macOS Apple Silicon | `macos-15` | 24 |
+| macOS Intel | `macos-15-intel` | 24 |
+
+Each job checks its actual CPU architecture, protocol/interface tests, and installation of the final tarball in a fresh project. See the [CI runs](https://github.com/nobrowning/llm-discovery-core/actions/workflows/ci.yml) for completed results; this table describes the configured coverage, not a claim that an unrun job passed. Node.js's own OS support requirements still apply.
+
+Real-network status is separate: the earlier Windows/WSL Demo has live-network evidence; native macOS Bonjour coexistence, Linux Avahi coexistence, and cross-machine ARM64 discovery are not established by these socket-free tests. Follow the [Demo validation report](https://github.com/nobrowning/llm-service-discovery-demo/blob/main/docs/validation-report.md) for actual runs. A LAN must carry IPv4 mDNS (`224.0.0.251`, UDP 5353) and the advertised API traffic. Keep existing system mDNS services enabled during coexistence checks. Investigate bind/membership warnings, the selected adapter, host firewall/local-network permissions, and access-point isolation when discovery fails; this library never changes those settings.
+
+Release archives are built on the Linux release runner. Repeated packing on the same environment is checked; a local rebuild on another OS can differ in tar executable-bit metadata without changing JavaScript contents.
+
 ## 中文说明
 
 这是可独立复用的局域网 LLM API 发现库，负责 mDNS/DNS-SD 浏览、记录校验、缓存与服务生命周期。它不依赖 Harness、Docker 或演示模型，也不读取凭据或修改系统网络设置。
 
-从 [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases) 下载 `.tgz` 和 `SHA256SUMS`，校验后在应用目录运行 `npm install ./llm-discovery-discovery-core-0.3.0.tgz`。需要 Node.js 22+，安装时 npm 仍需获取第三方依赖。此包是供开发者集成的 SDK，不是独立桌面程序，无需另装公告器、Harness 插件或 Demo。
+从 [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases) 下载 `.tgz` 和 `SHA256SUMS`，校验后在应用目录运行 `npm install ./llm-discovery-discovery-core-0.3.1.tgz`。需要 Node.js 22+，安装时 npm 仍需获取第三方依赖。此包是供开发者集成的 SDK，不是独立桌面程序，无需另装公告器、Harness 插件或 Demo。
 
 开发者运行 `npm ci --ignore-scripts`、`npm test`、`npm run release:prepare` 即可生成并验证发行包；产物在 `.release-artifacts/`。多网卡机器应通过 `interfaceAddress` 明确选择客户端 IPv4 地址。
+
+Windows、macOS（Intel / Apple Silicon）、Linux（x64 / ARM64）使用同一份安装包，安装与 CPU 匹配的 Node.js 22+ 即可。macOS 校验使用 `shasum -a 256 -c SHA256SUMS`。使用 `listIPv4Interfaces()` 列出网卡，再把其 IPv4 地址传给 `interfaceAddress`；不要填写 `en0`、`eth0` 等网卡名称。默认选择首个非回环 IPv4 的行为保持不变，但多网卡、VPN、虚拟网卡环境应明确选择。运行时会检查地址仍属于本机。
+
+CI 已配置五种系统/架构及 Node.js 22/24 代表组合，具体通过情况以 Actions 记录为准。单元测试和打包安装不等于真实组播通过；Bonjour/Avahi 共存、真实局域网跨机发现的验收状态见 Demo 报告。目前限 IPv4 mDNS，不承诺 IPv6或跨子网发现，不自动调整防火墙、系统 mDNS 或网络权限。
 
 公告功能位于单独的 advertiser 模块；HTTPS 信任、认证和推理由客户端实现。发现记录只是未受信任的服务线索，不能直接当作授权。真实网络互通验收保存在独立 Demo 仓库。
 
