@@ -1,0 +1,19 @@
+{
+  "name": "@llm-discovery/discovery-core",
+  "version": "0.3.0",
+  "description": "mDNS/DNS-SD discovery and record validation for local LLM API services.",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./protocol": "./protocol.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": ["index.mjs", "protocol.mjs", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "dependencies": { "multicast-dns": "7.2.5" }
+}
