@@ -27,4 +27,13 @@ jobs:
       - name: Publish verified release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" .release-artifacts/*.tgz .release-artifacts/SHA256SUMS --verify-tag --generate-notes --title "$GITHUB_REF_NAME" --draft
+        run: |
+          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != "true" ]; then
+              echo "Refusing to replace assets in a published release."
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" .release-artifacts/*.tgz .release-artifacts/SHA256SUMS --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" .release-artifacts/*.tgz .release-artifacts/SHA256SUMS --verify-tag --generate-notes --title "$GITHUB_REF_NAME" --draft
+          fi
