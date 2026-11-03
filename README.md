@@ -12,7 +12,19 @@ npm test
 npm pack
 ```
 
-This checkout is independently installable. Until an npm release is published, consumers can install the generated tarball with `npm install /path/to/llm-discovery-discovery-core-0.3.0.tgz`. No published npm package or public repository URL is assumed.
+## Install a release
+
+Download `llm-discovery-discovery-core-0.3.0.tgz` and `SHA256SUMS` from [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases). With Node.js 22 or later and npm installed, install the archive in your application:
+
+```sh
+npm install ./llm-discovery-discovery-core-0.3.0.tgz
+```
+
+This is a developer library, with no desktop application or command-line entry point. npm obtains its third-party dependencies from the registry or your local cache; the archive is not an offline runtime bundle. No separate advertiser, Harness plugin, or Demo installation is required. The package is distributed through GitHub Releases and is not published to the npm registry.
+
+On Linux, verify the downloaded archive with `sha256sum --check SHA256SUMS`. On Windows, compare `(Get-FileHash .\llm-discovery-discovery-core-0.3.0.tgz -Algorithm SHA256).Hash` with the entry in `SHA256SUMS`.
+
+Maintainers can run `npm run release:prepare` after installation and tests. It checks the package allowlist, checks reproducible archive bytes, installs the final archive into an isolated temporary project, and exercises its public exports. Outputs are written to `.release-artifacts/`; an optional output directory can be supplied after `--`. Pushing a matching `v0.3.0` tag runs these checks and uploads the archive plus checksum file to GitHub Releases. It never publishes to npm.
 
 ## Discover services
 
@@ -69,7 +81,9 @@ The network client currently uses IPv4 multicast. It can retain A and AAAA recor
 
 这是可独立复用的局域网 LLM API 发现库，负责 mDNS/DNS-SD 浏览、记录校验、缓存与服务生命周期。它不依赖 Harness、Docker 或演示模型，也不读取凭据或修改系统网络设置。
 
-运行 `npm ci --ignore-scripts`、`npm test`、`npm pack` 即可安装依赖、测试和生成独立安装包。尚未发布 npm 时可直接安装生成的 `.tgz`。多网卡机器应通过 `interfaceAddress` 明确选择客户端 IPv4 地址。
+从 [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases) 下载 `.tgz` 和 `SHA256SUMS`，校验后在应用目录运行 `npm install ./llm-discovery-discovery-core-0.3.0.tgz`。需要 Node.js 22+，安装时 npm 仍需获取第三方依赖。此包是供开发者集成的 SDK，不是独立桌面程序，无需另装公告器、Harness 插件或 Demo。
+
+开发者运行 `npm ci --ignore-scripts`、`npm test`、`npm run release:prepare` 即可生成并验证发行包；产物在 `.release-artifacts/`。多网卡机器应通过 `interfaceAddress` 明确选择客户端 IPv4 地址。
 
 公告功能位于单独的 advertiser 模块；HTTPS 信任、认证和推理由客户端实现。发现记录只是未受信任的服务线索，不能直接当作授权。真实网络互通验收保存在独立 Demo 仓库。
 
