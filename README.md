@@ -14,17 +14,17 @@ npm pack
 
 ## Install a release
 
-Download `llm-discovery-discovery-core-0.3.1.tgz` and `SHA256SUMS` from [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases). With Node.js 22 or later and npm installed, install the archive in your application:
+Download `llm-discovery-discovery-core-0.3.2.tgz` and `SHA256SUMS` from [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases). With Node.js 22 or later and npm installed, install the archive in your application:
 
 ```sh
-npm install ./llm-discovery-discovery-core-0.3.1.tgz
+npm install ./llm-discovery-discovery-core-0.3.2.tgz
 ```
 
 This is a developer library, with no desktop application or command-line entry point. npm obtains its third-party dependencies from the registry or your local cache; the archive is not an offline runtime bundle. No separate advertiser, Harness plugin, or Demo installation is required. The package is distributed through GitHub Releases and is not published to the npm registry.
 
-On Linux, verify the downloaded archive with `sha256sum --check SHA256SUMS`; on macOS use `shasum -a 256 -c SHA256SUMS`. On Windows, compare `(Get-FileHash .\llm-discovery-discovery-core-0.3.1.tgz -Algorithm SHA256).Hash` with the entry in `SHA256SUMS`.
+On Linux, verify the downloaded archive with `sha256sum --check SHA256SUMS`; on macOS use `shasum -a 256 -c SHA256SUMS`. On Windows, compare `(Get-FileHash .\llm-discovery-discovery-core-0.3.2.tgz -Algorithm SHA256).Hash` with the entry in `SHA256SUMS`.
 
-Maintainers can run `npm run release:prepare` after installation and tests. It checks the package allowlist, checks reproducible archive bytes, installs the final archive into an isolated temporary project, and exercises its public exports. Outputs are written to `.release-artifacts/`; an optional output directory can be supplied after `--`. Pushing a matching `v0.3.1` tag runs these checks and uploads the archive plus checksum file to GitHub Releases. It never publishes to npm.
+Maintainers can run `npm run release:prepare` after installation and tests. It checks the package allowlist, checks reproducible archive bytes, installs the final archive into an isolated temporary project, and exercises its public exports. Outputs are written to `.release-artifacts/`; an optional output directory can be supplied after `--`. Pushing a matching `v0.3.2` tag runs these checks and uploads the archive plus checksum file to GitHub Releases. It never publishes to npm.
 
 ## Discover services
 
@@ -63,6 +63,21 @@ process.once('SIGINT', async () => {
 The selected interface must support multicast. This library does not alter firewall, routing, or system DNS settings. If no interface is supplied, it selects the first eligible non-loopback IPv4 interface; applications with multiple adapters should select one explicitly.
 
 `snapshot()` returns the current candidates. `subscribe()` receives discovery, removal, validation, and network warnings. `stop()` closes the socket and timers. `query()` requests a refresh. Candidate state includes the network attachment, resolved addresses, expiration, validation, and a record generation so clients can reject stale selections.
+
+## Waiting for a temporarily unavailable network
+
+Clients that need to remain usable while offline can pass `waitForNetwork: true`.
+An absent selected address, no active IPv4 interface, or transient network socket
+failure then enters `status === 'waiting'` instead of rejecting startup. The
+existing network-check timer retries, and resumes discovery when the selected
+network is available. A pinned address never falls back to another adapter.
+Invalid addresses and permission failures still reject initial startup.
+
+`status` is `stopped`, `waiting`, `discovering`, or `error`; subscribers receive
+`{ type: 'status', status }` only on transitions. `running` still means a socket
+is present, so it is false while waiting. `stop()` cancels binding and retries;
+late packets from old sockets are ignored. Network changes invalidate cached
+candidates and attachment IDs. The default strict startup behavior is unchanged.
 
 ## Protocol helpers
 
@@ -110,7 +125,7 @@ Release archives are built on the Linux release runner. Repeated packing on the 
 
 这是可独立复用的局域网 LLM API 发现库，负责 mDNS/DNS-SD 浏览、记录校验、缓存与服务生命周期。它不依赖 Harness、Docker 或演示模型，也不读取凭据或修改系统网络设置。
 
-从 [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases) 下载 `.tgz` 和 `SHA256SUMS`，校验后在应用目录运行 `npm install ./llm-discovery-discovery-core-0.3.1.tgz`。需要 Node.js 22+，安装时 npm 仍需获取第三方依赖。此包是供开发者集成的 SDK，不是独立桌面程序，无需另装公告器、Harness 插件或 Demo。
+从 [GitHub Releases](https://github.com/nobrowning/llm-discovery-core/releases) 下载 `.tgz` 和 `SHA256SUMS`，校验后在应用目录运行 `npm install ./llm-discovery-discovery-core-0.3.2.tgz`。需要 Node.js 22+，安装时 npm 仍需获取第三方依赖。此包是供开发者集成的 SDK，不是独立桌面程序，无需另装公告器、Harness 插件或 Demo。
 
 开发者运行 `npm ci --ignore-scripts`、`npm test`、`npm run release:prepare` 即可生成并验证发行包；产物在 `.release-artifacts/`。多网卡机器应通过 `interfaceAddress` 明确选择客户端 IPv4 地址。
 

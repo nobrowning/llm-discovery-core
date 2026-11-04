@@ -13,15 +13,19 @@ export function listIPv4Interfaces(readInterfaces = os.networkInterfaces) {
 
 /** Validate an address, not an OS-specific interface name such as en0 or eth0. */
 export function requireLocalIPv4Interface(address, available = listIPv4Interfaces()) {
-  if (typeof address !== 'string' || isIP(address) !== 4) throw new Error('Select a local IPv4 interface address, not a device name.');
-  if (!available.some(row => row.address === address)) throw new Error('The selected discovery interface is not currently attached.');
+  if (typeof address !== 'string' || isIP(address) !== 4) throw interfaceError('DISCOVERY_INTERFACE_INVALID', 'Select a local IPv4 interface address, not a device name.');
+  if (!available.some(row => row.address === address)) throw interfaceError('DISCOVERY_INTERFACE_UNAVAILABLE', 'The selected discovery interface is not currently attached.');
   return address;
 }
+
+const interfaceError = (code, message) => Object.assign(new Error(message), { code });
+const networkUnavailable = error => ['DISCOVERY_INTERFACE_UNAVAILABLE', 'DISCOVERY_NO_INTERFACE', 'ENETDOWN', 'ENETUNREACH', 'EHOSTUNREACH', 'EADDRNOTAVAIL', 'ENODEV'].includes(error?.code);
 
 const recordKey = recordIdentity;
 const semanticCandidate = (candidate) => JSON.stringify({ ...candidate, expiresAt: 0, recordGeneration: 0 });
 
 export function createDiscoveryClient(options = {}) {
+  options = { ...options };
   const listeners = new Set();
   const cache = new Map();
   let candidates = new Map();
@@ -34,7 +38,9 @@ export function createDiscoveryClient(options = {}) {
   let active = false;
   let lifecycle = 0;
   let starting;
-  let rebinding = false;
+  let rebinding;
+  let stopping;
+  let status = 'stopped';
   let cancelBind;
   const lastQuestion = new Map();
   const interfaceId = () => currentInterface ?? 'all';
@@ -45,6 +51,20 @@ export function createDiscoveryClient(options = {}) {
   const interfaces = () => listIPv4Interfaces(options.networkInterfaces);
   const networkFingerprint = () => JSON.stringify(interfaces().map(({ name, address, mac }) => [name, address, mac]).sort());
 
+  function setStatus(value) {
+    if (status === value) return;
+    status = value;
+    notify({ type: 'status', status });
+  }
+  function transportFailure(error, socket) {
+    if (!active || transport !== socket) return;
+    if (options.waitForNetwork && networkUnavailable(error)) {
+      transport = null;
+      clearAttachment('network-attachment-changed');
+      setStatus('waiting');
+      socket.destroy();
+    } else notify({ type: 'warning', error: String(error.message ?? error) });
+  }
   function records(name, type) {
     return [...cache.values()].filter((r) => canonicalName(r.name) === canonicalName(name) && r.type === type && r.expiresAt > now());
   }
@@ -56,8 +76,9 @@ export function createDiscoveryClient(options = {}) {
     for (const q of relevant) lastQuestion.set(`${canonicalName(q.name)}|${q.type}`, now());
     const answers = [...cache.values()].filter((record) => record.expiresAt > now() && relevant.some((q) => canonicalName(q.name) === canonicalName(record.name) && q.type === record.type))
       .slice(0, 64).map((record) => ({ name: record.name, type: record.type, class: 'IN', data: record.data, flush: false, ttl: Math.max(0, Math.floor((record.expiresAt - now()) / 1000)) }));
-    try { transport.query({ questions: relevant.slice(0, 64), answers }, (error) => { if (error) notify({ type: 'warning', error: error.message }); }); }
-    catch (error) { notify({ type: 'warning', error: error.message }); }
+    const socket = transport;
+    try { socket.query({ questions: relevant.slice(0, 64), answers }, (error) => { if (error) transportFailure(error, socket); }); }
+    catch (error) { transportFailure(error, socket); }
   }
   function rebuild() {
     const next = new Map();
@@ -136,58 +157,78 @@ export function createDiscoveryClient(options = {}) {
     const available = interfaces();
     // One socket corresponds to one attachment. Mixing interfaces cannot safely key candidates.
     currentInterface = options.interfaceAddress || available[0]?.address;
-    if (!currentInterface) throw new Error('No active IPv4 interface; select a LAN interface explicitly.');
-    if (!options.transportFactory) requireLocalIPv4Interface(currentInterface, available);
+    if (!currentInterface) throw interfaceError('DISCOVERY_NO_INTERFACE', 'No active IPv4 interface; select a LAN interface explicitly.');
+    if (!options.transportFactory || options.networkInterfaces) requireLocalIPv4Interface(currentInterface, available);
     const socket = factory({ bind: '0.0.0.0', interface: currentInterface, port: options.port ?? 5353, loopback: true, reuseAddr: true });
     transport = socket;
+    let readyForTraffic = false;
     socket.on('response', (packet, rinfo) => { if (active && transport === socket && lifecycle === epoch) ingest(packet, rinfo); });
-    socket.on('warning', (error) => notify({ type: 'warning', error: String(error.message ?? error) }));
-    socket.on('error', (error) => notify({ type: 'error', error: String(error.message ?? error) }));
+    socket.on('warning', (error) => { if (readyForTraffic || !networkUnavailable(error)) transportFailure(error, socket); });
+    socket.on('error', (error) => { if (readyForTraffic) transportFailure(error, socket); });
     await new Promise((resolve, reject) => {
-      const cleanup = () => { clearTimeout(timeout); socket.removeListener('ready', ready); socket.removeListener('error', failed); if (cancelBind === cancel) cancelBind = undefined; };
-      const ready = () => { cleanup(); resolve(); };
+      const cleanup = () => { clearTimeout(timeout); socket.removeListener('ready', ready); socket.removeListener('error', failed); socket.removeListener('warning', warning); if (cancelBind === cancel) cancelBind = undefined; };
+      const ready = () => { readyForTraffic = true; cleanup(); resolve(); };
       const failed = (error) => { cleanup(); reject(error); };
+      const warning = error => { if (networkUnavailable(error)) failed(error); };
       const cancel = () => failed(new Error('mDNS startup cancelled'));
       const timeout = setTimeout(() => failed(new Error('mDNS bind timed out')), 5000);
       cancelBind = cancel;
-      socket.once('ready', ready); socket.once('error', failed);
-    }).catch((error) => { if (transport === socket) transport = null; socket.destroy(); throw error; });
-    if (!active || lifecycle !== epoch) { socket.destroy(); return; }
+      socket.once('ready', ready); socket.once('error', failed); socket.on('warning', warning);
+    }).catch((error) => { if (transport === socket) { transport = null; socket.destroy(); } throw error; });
+    if (!active || lifecycle !== epoch) { if (transport === socket) { transport = null; socket.destroy(); } return; }
+    readyForTraffic = true;
     query();
   }
+  async function attach(epoch) {
+    try {
+      await openSocket(epoch);
+      if (active && lifecycle === epoch && transport) setStatus('discovering');
+    } catch (error) {
+      if (!active || lifecycle !== epoch) return;
+      if (!options.waitForNetwork || !networkUnavailable(error)) throw error;
+      setStatus('waiting');
+    }
+  }
   async function start() {
+    if (stopping) await stopping;
     if (starting) return starting;
     if (active) return;
     active = true;
     const epoch = ++lifecycle;
     lastNetworkFingerprint = networkFingerprint();
-    starting = openSocket(epoch).then(() => {
+    starting = attach(epoch).then(() => {
       if (!active || lifecycle !== epoch) return;
       timers = [setInterval(query, options.queryIntervalMs ?? 10000), setInterval(sweep, 250)];
-      timers.push(setInterval(async () => {
-      const next = networkFingerprint();
-      if (!rebinding && (next !== lastNetworkFingerprint || !transport)) {
-        rebinding = true;
-        lastNetworkFingerprint = next;
-        clearAttachment('network-attachment-changed');
-        const socket = transport; transport = null;
-        if (socket) await new Promise((resolve) => socket.destroy(resolve));
-        try { if (active && lifecycle === epoch) await openSocket(epoch); }
-        catch (error) { notify({ type: 'warning', error: error.message }); }
-        finally { rebinding = false; }
-      }
+      timers.push(setInterval(() => {
+        if (!active || lifecycle !== epoch || rebinding) return;
+        rebinding = (async () => {
+          const next = networkFingerprint();
+          if (next === lastNetworkFingerprint && transport) return;
+          lastNetworkFingerprint = next;
+          if (options.waitForNetwork) setStatus('waiting');
+          clearAttachment('network-attachment-changed');
+          const socket = transport; transport = null;
+          if (socket) await new Promise((resolve) => socket.destroy(resolve));
+          if (active && lifecycle === epoch) await attach(epoch);
+        })().catch(error => { if (active && lifecycle === epoch) { setStatus('error'); notify({ type: 'warning', error: error.message }); } }).finally(() => { rebinding = null; });
       }, options.networkCheckIntervalMs ?? 2000));
-    }).catch((error) => { if (lifecycle === epoch) active = false; throw error; }).finally(() => { starting = null; });
+    }).catch((error) => { if (lifecycle === epoch) { active = false; setStatus('error'); } throw error; }).finally(() => { starting = null; });
     return starting;
   }
   async function stop() {
+    if (stopping) return stopping;
     active = false; lifecycle++;
     cancelBind?.();
     for (const timer of timers) clearInterval(timer);
     timers = [];
     const socket = transport; transport = null;
-    if (socket) await new Promise((resolve) => socket.destroy(resolve));
-    clearAttachment('discovery-stopped');
+    stopping = (async () => {
+      if (socket) await new Promise((resolve) => socket.destroy(resolve));
+      await Promise.allSettled([starting, rebinding]);
+      clearAttachment('discovery-stopped');
+      setStatus('stopped');
+    })().finally(() => { stopping = null; });
+    return stopping;
   }
   return {
     start, stop, query,
@@ -196,5 +237,6 @@ export function createDiscoveryClient(options = {}) {
     // Deterministic protocol testing without opening sockets.
     ingest, sweep,
     get running() { return transport !== null; },
+    get status() { return status; },
   };
 }
