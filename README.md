@@ -60,7 +60,7 @@ process.once('SIGINT', async () => {
 });
 ```
 
-The selected interface must support multicast. This library does not alter firewall, routing, or system DNS settings. If no interface is supplied, it selects the first eligible non-loopback IPv4 interface; applications with multiple adapters should select one explicitly.
+The selected interface must support multicast. This library does not alter firewall, routing, or system DNS settings. The legacy default, when no interface is supplied, selects the first eligible non-loopback IPv4 interface. Applications can instead opt into the automatic attachment policy below.
 
 `snapshot()` returns the current candidates. `subscribe()` receives discovery, removal, validation, and network warnings. `stop()` closes the socket and timers. `query()` requests a refresh. Candidate state includes the network attachment, resolved addresses, expiration, validation, and a record generation so clients can reject stale selections.
 
@@ -78,6 +78,64 @@ Invalid addresses and permission failures still reject initial startup.
 is present, so it is false while waiting. `stop()` cancels binding and retries;
 late packets from old sockets are ignored. Network changes invalidate cached
 candidates and attachment IDs. The default strict startup behavior is unchanged.
+
+## Automatically discover again after changing networks
+
+For a client that moves from the office network to a home network, opt into automatic
+selection and resilient startup together:
+
+```js
+const client = createDiscoveryClient({
+  interfaceMode: 'auto',
+  waitForNetwork: true,
+  // Optional: follow this physical adapter across DHCP address changes.
+  // preferredInterfaceName: 'en0',
+});
+client.subscribe(event => {
+  if (event.type === 'network') console.log(event.attachment);
+});
+await client.start();
+console.log(client.attachment);
+// { mode: 'auto', interfaceName, interfaceAddress, attachmentEpoch }, or null.
+```
+
+Automatic mode ignores any old `interfaceAddress` configuration. It selects an
+assigned physical LAN adapter, preferring `preferredInterfaceName` when attached,
+then the usable default-route adapter, then the existing physical adapter and a
+stable name/address order. Recognizable VPN/container/virtual adapters are excluded;
+use a pinned address for an intentional VPN or virtual-network deployment. Assigned
+addresses are preferred to link-local IPv4; link-local-only physical LANs remain
+eligible. This is a single-interface policy, not concurrent scanning of all NICs.
+
+When the selected attachment changes, the old candidate cache is cleared, previous
+socket responses are ignored, and discovery starts on the new address. Unrelated
+NIC changes do not invalidate the selected attachment. No available LAN enters the
+normal waiting state. Discovery does not reconnect API sessions or replay requests;
+the consuming application must revalidate trust and credentials before connecting.
+
+Read-only OS route and neighbor-cache inspection adds best-effort detection of
+different networks that assign the same IPv4 address. macOS uses `route` and `arp`,
+Linux reads `/proc/net/route` and `/proc/net/arp`, and Windows uses bounded
+PowerShell `Get-NetRoute`/`Get-NetNeighbor` queries. No external API or SSID/location
+permission is needed. Missing platform tools fall back to interface selection.
+If the interface/address/default gateway and available gateway identity are all
+unchanged, OS polling alone cannot prove that a network changed. An embedding host
+with OS network-change notifications can supply a stronger attachment identity.
+
+`resolveNetworkAttachment({ interfaces, previous, signal })` is an optional async
+hook returning `{ interfaceAddress, interfaceName?, networkId? }` or `null`. The
+address must belong to the supplied interfaces. Its `networkId` is an attachment
+identity hint only: it never replaces the top-level `networkId` used by candidates
+and trust policies. Resolver work has a 3500 ms deadline (`networkProbeTimeoutMs`)
+and receives an abort signal on shutdown; late results cannot open a new socket.
+The network monitor uses the existing `networkCheckIntervalMs` interval (2000 ms).
+Injected `networkInterfaces` without a resolver uses deterministic selection and
+does not inspect the real host's routing table.
+
+Omitting `interfaceMode`, or setting it to `pinned`, preserves the existing explicit
+IPv4 selection. Automatic mode does not rewrite the caller's configuration. The
+exported `chooseIPv4Attachment()` and `readNetworkRouteHints()` helpers expose the
+selection and read-only inspection separately for host integration and tests.
 
 ## Protocol helpers
 
@@ -130,6 +188,8 @@ Release archives are built on the Linux release runner. Repeated packing on the 
 开发者运行 `npm ci --ignore-scripts`、`npm test`、`npm run release:prepare` 即可生成并验证发行包；产物在 `.release-artifacts/`。多网卡机器应通过 `interfaceAddress` 明确选择客户端 IPv4 地址。
 
 Windows、macOS（Intel / Apple Silicon）、Linux（x64 / ARM64）使用同一份安装包，安装与 CPU 匹配的 Node.js 22+ 即可。macOS 校验使用 `shasum -a 256 -c SHA256SUMS`。使用 `listIPv4Interfaces()` 列出网卡，再把其 IPv4 地址传给 `interfaceAddress`；不要填写 `en0`、`eth0` 等网卡名称。默认选择首个非回环 IPv4 的行为保持不变，但多网卡、VPN、虚拟网卡环境应明确选择。运行时会检查地址仍属于本机。
+
+从公司回家等移动场景可显式开启 `interfaceMode: 'auto'` 和 `waitForNetwork: true`：旧 IPv4 不再锁定发现，新网络接通后重新选择物理 LAN 网卡、清除旧候选并开始发现。可选 `preferredInterfaceName` 按设备名跟随 Wi-Fi 的 DHCP 地址变化。旧的固定地址模式保持兼容；自动发现不等于自动授权或恢复推理会话。当前地址和网络状态可从 `attachment` 及 `network` 事件读取。相同 IPv4 的网络变化使用网关身份作尽力检测，不能替代完整 OS 网络切换通知；更强的宿主通知可通过 resolver 注入。
 
 CI 已配置五种系统/架构及 Node.js 22/24 代表组合，具体通过情况以 Actions 记录为准。单元测试和打包安装不等于真实组播通过；Bonjour/Avahi 共存、真实局域网跨机发现的验收状态见 Demo 报告。目前限 IPv4 mDNS，不承诺 IPv6或跨子网发现，不自动调整防火墙、系统 mDNS 或网络权限。
 

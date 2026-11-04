@@ -1,6 +1,6 @@
 {
   "name": "@llm-discovery/discovery-core",
-  "version": "0.3.2",
+  "version": "0.4.0-roaming.1",
   "description": "mDNS/DNS-SD discovery and record validation for local LLM API services.",
   "type": "module",
   "main": "index.mjs",
@@ -11,6 +11,7 @@
   },
   "files": [
     "index.mjs",
+    "network.mjs",
     "protocol.mjs",
     "README.md",
     "LICENSE"
