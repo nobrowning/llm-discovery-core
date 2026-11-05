@@ -19,7 +19,7 @@ const pack = () => JSON.parse(npm(['pack', '--json', '--ignore-scripts', '--pack
 const packed = pack();
 assert.equal(packed.name, manifest.name);
 assert.equal(packed.version, manifest.version);
-assert.deepEqual(packed.files.map(file => file.path).sort(), ['LICENSE', 'README.md', 'index.mjs', 'network.mjs', 'package.json', 'protocol.mjs'].sort());
+assert.deepEqual(packed.files.map(file => file.path).sort(), ['LICENSE', 'README.md', 'README.zh-CN.md', 'index.mjs', 'network.mjs', 'package.json', 'protocol.mjs'].sort());
 assert.deepEqual(packed.bundled, []);
 const archive = join(out, packed.filename);
 const checksum = await sha256(archive);
